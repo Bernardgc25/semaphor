@@ -1,0 +1,300 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <unistd.h>
+#include <signal.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <time.h>
+#include <stdbool.h>
+#include <string.h>
+#include <ctype.h>
+/////////
+#include <sys/types.h>				// for pid_t
+#include <sys/mman.h>				// for mmap
+#include <sys/wait.h>				// for waitpid
+
+
+
+
+////////////
+# define STUDENT_COUNT_MIN 	2
+# define STUDENT_COUNT_MAX 	10
+# define CHAIR_COUNT 		3
+# define HELPS_MAX			3
+# define BUF_SIZE 5									// logical size of buffer
+# define SHARED_MEM_SIZE (BUF_SIZE+2)*sizeof(int)	// size of shared memory
+
+//global variables
+sem_t professor_sem;
+sem_t students_sem;
+sem_t chair_sem;
+sem_t gettingHelp_sem;
+
+//function prototypes
+void *professor(void *arg);
+void *students(void *arg);
+void helping_students();
+
+//flag variables
+//int notDone = 1;
+
+//student counts
+int studentsWaiting = 0;
+//int hallwayChairs = 0;
+
+int i;
+
+
+//queue variables and function
+int queue[CHAIR_COUNT];
+unsigned int size  = 0;
+unsigned int rear  = CHAIR_COUNT - 1;   // Initally assumed that rear is at end
+unsigned int front = 0;
+
+
+int enqueue(int data);
+int dequeue();
+int isFull();
+int isEmpty();
+
+
+
+int main()
+{
+	//semaphore variables
+	sem_init(&professor_sem, 0,0);		//professor sleeping/available
+	sem_init(&students_sem, 0,0);		//students need help/don't need help
+	sem_init(&chair_sem, 0,0);			//chair available/not available 
+	sem_init(&gettingHelp_sem,0,0);     //student is getting help 
+
+	//thread variables
+	//pthread_t professorthd;
+	pthread_t *studentsthd = NULL;
+	pthread_attr_t attr;
+
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+	void *status;
+	int err;
+
+
+
+	int NumofStudents;
+
+    //program starts 
+	printf("How many students coming to professor's office?");
+	scanf("%d", &NumofStudents);
+	
+	//int i; 
+
+	if (NumofStudents > 2 && NumofStudents < 10)
+	{
+		for(i=0; i< NumofStudents; i++)
+		{
+			printf("\033[0;93mStudent %d doing assignment.\033[0m", i+1);
+			printf("\n");
+
+		}
+			//allocate memory for threads 
+			studentsthd = malloc(sizeof(pthread_t)*NumofStudents); 
+			//studentsthd = (pthread_t *)malloc(NumofStudents *sizeof(int));
+			
+		   	//check for errors 			
+			if (studentsthd == NULL)
+    		{
+       		printf("out of memory\n");
+       		exit(EXIT_FAILURE);
+    		}
+			
+			//create dynamic threads
+			for(i=0; i<NumofStudents; i++)
+            {
+               	err = pthread_create(&(studentsthd[i]), &attr, &students, NULL);
+               	//printf("running thread %d....",j+1);
+               	//printf("\n");
+
+            	if (err != 0)
+               	{
+            	printf("\ncan't create thread :[%s]", strerror(err));
+               	}
+            }
+			
+			//destroy attribute
+			pthread_attr_destroy(&attr);
+
+			//join threads
+			for(i = 0; i<NumofStudents; i++)
+            {
+            	pthread_join(studentsthd[i], &status);
+            }
+
+			free(studentsthd);
+			studentsthd = NULL; 
+		
+	}
+
+	else
+	{
+		printf("Invalid number of students\n");
+	}
+
+
+
+	
+	pthread_exit(NULL);
+	//return 0;
+}
+
+
+//professor
+void *professor(void *arg)
+{
+
+	while(true)
+	{
+		//student wakes the professor
+		sem_wait(&students_sem);
+		printf("\033[0;92mProfessor has been awakened by a student\033[0m\n");
+
+		//help all waiting students
+		if(studentsWaiting != 0 )
+		{
+			//student wait for their turn 
+			sem_wait(&chair_sem);
+			studentsWaiting--;
+			//students vacates a chair and enters office
+			printf("\033[0;92mStudent frees chair and enters professor's office. Remaining chairs %d\033[0m\n", studentsWaiting );
+			
+			//professor is helping a student
+			sem_post(&professor_sem);
+			printf("\033[0;92mProfessor is helping a student\033[0m\n");
+			printf("\n");
+			usleep(rand() % 1500000);
+			sem_post(&chair_sem);
+
+			//signal that next student can enter
+			sem_wait(&gettingHelp_sem);
+		}
+
+		//empty hallway, done helping all students 
+		else
+		{
+			break; 
+		}
+	}
+
+	printf("\033[0;94m All studtents assisted, professor is leaving.\033[0m\n");
+	pthread_exit((void *) 0);
+}
+
+//professor
+void *students(void *arg)
+{
+
+	while(true)
+	{
+		//student is working on the assignment for a random of time 
+		printf("\033[0;93mStudent %d doing assignment.\033[0m\n", i);
+		usleep(rand() % 2000000);
+
+		//students decides to ask help
+		printf("\033[0;31mStudent %d needs help from the professor.\033[0m\n", i);
+
+		//student wait in the hallway 
+		sem_wait(&chair_sem);
+		
+			//available seats in the hallway, student wait  
+			if(studentsWaiting < CHAIR_COUNT)
+			{
+				//update students and hallway chairs
+				studentsWaiting++;
+				//awake the sleeping professor 	
+				sem_post(&students_sem);
+				sem_post(&chair_sem);
+                
+				//wait until professor is available to help
+				sem_wait(&professor_sem);
+				printf("\033[0;92mStudent is getting help from the professor.\033[0m\n");
+				
+				//professor is done helping the student
+				sem_post(&gettingHelp_sem);
+			}
+
+			//empty seats in the hallway, students leave 
+			else
+			{
+			printf("\033[0;31Chairs occupied, student %d will return later.\033[0m\n", i);
+			sem_post(&chair_sem);
+			}
+		
+
+	}
+	
+	pthread_exit((void *) 0);
+}
+
+//helping students
+void helping_students()
+{
+
+}
+
+//enqueue
+int enqueue(int data)
+{
+    // Queue is full throw Queue out of capacity error.
+    if (isFull())
+    {
+        return 0;
+    }
+
+    // Ensure rear never crosses array bounds
+    rear = (rear + 1) % CHAIR_COUNT;
+
+    // Increment queue size
+    size++;
+
+    // Enqueue new element to queue
+    queue[rear] = data;
+
+    // Successfully enqueued element to queue
+
+    return 1;
+}
+
+//dequeue
+int dequeue()
+{
+    int data = INT_MIN;
+
+    // Queue is empty, throw Queue underflow error
+    if (isEmpty())
+    {
+        return INT_MIN;
+    }
+
+    // Dequeue element from queue
+    data = queue[front];
+
+    // Ensure front never crosses array bounds
+    front = (front + 1) % CHAIR_COUNT;
+
+    // Decrease queue size
+    size--;
+
+    return data;
+}
+
+//full queue
+int isFull()
+{
+    return (size == CHAIR_COUNT);
+}
+
+//empty queue
+int isEmpty()
+{
+    return (size == 0);
+}

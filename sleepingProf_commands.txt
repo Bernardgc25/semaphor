@@ -1,0 +1,13 @@
+
+#go to directory
+cd Desktop/CS370/project/P3
+gcc -g -Wall -pedantic -pthread -o sleepingProf sleepingProf.c
+gcc -g sleepingProf.c -o sleepingProf -lpthread	
+
+#reset ddd 
+rm ~/.ddd/init	
+sudo apt-get remove ddd																						
+
+#go to debugging directory
+cd Desktop/CS370/project/P3/Debug
+ddd sleepingProf
